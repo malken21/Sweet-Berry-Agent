@@ -8,10 +8,10 @@
 
 ```mermaid
 graph LR
-    User[Discord User] <--> Bot[Discord Bot (Nim)]
-    Bot <--> Agent[AI Agent (Nim)]
-    Agent <--> Ollama[Ollama (Local LLM)]
-    Agent <--> Workspace[Workspace/Docker]
+    User["Discord User"] <--> Bot["Discord Bot (Nim)"]
+    Bot <--> Agent["AI Agent (Nim)"]
+    Agent <--> Ollama["Ollama (Local LLM)"]
+    Agent <--> Workspace["Workspace/Docker"]
 ```
 
 ## 技術スタック

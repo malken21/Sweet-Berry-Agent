@@ -66,18 +66,31 @@ proc executePrompt(prompt: string, channelId: string) {.async.} =
       if data == "": break
       
       let cleanedData = cleanAnsi(data)
-      responseBuffer.add(cleanedData)
+      if cleanedData == "": continue
       
-      if responseBuffer.len > 0:
+      if responseBuffer.len + cleanedData.len > 1900:
+        # Buffer exceeds limit, send current buffer and start new
         if currentMsg == nil:
-          currentMsg = await discord.api.sendMessage(channelId, "[報告] 実行結果:\n" & responseBuffer)
+          currentMsg = await discord.api.sendMessage(channelId, "[報告] 実行出力:\n" & responseBuffer)
         else:
-          if responseBuffer.len < 1900:
-            discard await discord.api.editMessage(channelId, currentMsg.id, "[報告] 実行結果:\n" & responseBuffer)
-          else:
-            currentMsg = await discord.api.sendMessage(channelId, "...")
-            responseBuffer = cleanedData
-            discard await discord.api.editMessage(channelId, currentMsg.id, responseBuffer)
+          discard await discord.api.editMessage(channelId, currentMsg.id, responseBuffer)
+        
+        responseBuffer = cleanedData
+        currentMsg = nil # Forces a new message for remaining output
+      else:
+        responseBuffer.add(cleanedData)
+        if currentMsg == nil:
+          currentMsg = await discord.api.sendMessage(channelId, "[報告] 実行中...\n" & responseBuffer)
+        else:
+          discard await discord.api.editMessage(channelId, currentMsg.id, "[報告] 実行中...\n" & responseBuffer)
+    
+    # Final buffer flush
+    if responseBuffer.len > 0:
+      if currentMsg == nil:
+        discard await discord.api.sendMessage(channelId, "[報告] 実行結果:\n" & responseBuffer)
+      else:
+        discard await discord.api.editMessage(channelId, currentMsg.id, "[報告] 実行結果:\n" & responseBuffer)
+
     ws.close()
   except Exception as e:
     discard await discord.api.sendMessage(channelId, "[警告] 実行エラー: " & e.msg)
@@ -154,13 +167,12 @@ proc onMessageCreate(s: DiscordSession, m: Message) {.async.} =
     except: discard
     return
 
-  # Original logic for mentions
+  # Bot mentions
   if m.content.contains("<@" & s.user.id & ">") or m.content.contains("<@!" & s.user.id & ">"):
     let fullPrompt = m.content.replace(re"<@!?[0-9]+>", "").strip()
     if fullPrompt == "": return
 
-    # 自然言語による定期実行命令の判定
-    # 例: "1時間ごとに CPU使用率を確認して"
+    # Check for natural language scheduling
     let schedulePattern = re"(\d+[smhd])(?:おきに|ごとに|間隔で)\s*(.+?)(?:して|報告|実行|$)"
     var schedMatches: array[2, string]
     
@@ -178,36 +190,12 @@ proc onMessageCreate(s: DiscordSession, m: Message) {.async.} =
         )
         schedules.add(sched)
         saveSchedules()
-        discard await discord.api.sendMessage(m.channel_id, "[了解] 自然言語命令に基づきスケジュールを追加。内容: \"" & prompt & "\" (" & intervalStr & "間隔)")
+        discard await discord.api.sendMessage(m.channel_id, "[了解] 定期命令を登録。間隔: " & intervalStr)
         return
 
-    try:
-      let ws = await newWebSocket(agentWsUrl)
-      await ws.send(fullPrompt)
-      
-      var responseBuffer = ""
-      var currentMsg: Message = nil
-      
-      while ws.readyState == Open:
-        let data = await ws.receiveStr()
-        if data == "": break
-        
-        let cleanedData = cleanAnsi(data)
-        responseBuffer.add(cleanedData)
-        
-        if responseBuffer.len > 0:
-          if currentMsg == nil:
-            currentMsg = await discord.api.sendMessage(m.channel_id, responseBuffer)
-          else:
-            if responseBuffer.len < 1900:
-              discard await discord.api.editMessage(m.channel_id, currentMsg.id, responseBuffer)
-            else:
-              currentMsg = await discord.api.sendMessage(m.channel_id, "...")
-              responseBuffer = cleanedData
-              discard await discord.api.editMessage(m.channel_id, currentMsg.id, responseBuffer)
-      ws.close()
-    except Exception as e:
-      discard await discord.api.sendMessage(m.channel_id, "[警告] 実行エラー: " & e.msg)
+    # Normal execution via executePrompt
+    asyncCheck executePrompt(fullPrompt, m.channel_id)
+
 proc schedulerLoop() {.async.} =
   while true:
     let now = epochTime()
