@@ -19,3 +19,7 @@ nimcache/
 
 # Docker
 .docker/
+
+# Python
+__pycache__/
+*.py[cod]
