@@ -1,0 +1,31 @@
+services:
+  bot:
+    build:
+      context: ./bot
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - AGENT_WS_URL=ws://agent:8000
+    depends_on:
+      - agent
+    volumes:
+      - ./bot/data:/app/data
+    restart: always
+
+  agent:
+    build:
+      context: ./agent
+    environment:
+      - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://host.docker.internal:11434}
+      - LLM_MODEL=ollama/llama3
+      - LLM_BASE_URL=${OLLAMA_API_BASE:-http://host.docker.internal:11434}
+      - LLM_API_KEY=none
+      - SANDBOX_TYPE=docker
+      - SANDBOX_USER_ID=1000
+    volumes:
+      - ./agent/workspace:/app/workspace
+      - ./agent/skills:/app/skills
+      - ./agent/mcp.json:/app/mcp.json
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8000:8000"
+    restart: always

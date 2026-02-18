@@ -1,0 +1,21 @@
+# Nim binaries and build artifacts
+nimcache/
+*.exe
+*.js
+*.out
+/agent/src/agent_server
+/bot/src/bot
+
+# Environment variables
+.env
+.env.local
+
+# Agent workspace
+/agent/workspace/
+
+# IDE settings
+.vscode/
+.idea/
+
+# Docker
+.docker/

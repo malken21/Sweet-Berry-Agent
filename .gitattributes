@@ -1,0 +1,19 @@
+# Set default behavior to handle line endings.
+* text=auto eol=lf
+
+# Explicitly declare text files you want to always be normalized and converted
+# to native line endings on checkout.
+*.nim text
+*.nimble text
+*.json text
+*.md text
+*.yml text
+*.yaml text
+
+# Denote all files that are truly binary and should not be modified.
+*.png binary
+*.jpg binary
+
+# Linguist (GitHub) overrides
+/agent/workspace/* linguist-vendored
+.env.example linguist-documentation
