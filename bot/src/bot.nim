@@ -10,16 +10,18 @@ if not dirExists(dataDir):
   createDir(dataDir)
 
 type
+  # 定期実行タスクのデータ構造
   Schedule = object
-    prompt: string
-    intervalSeconds: int
-    nextRun: float # unix timestamp
-    channelId: string
+    prompt: string          # 実行するプロンプト
+    intervalSeconds: int    # 実行間隔（秒）
+    nextRun: float          # 次回実行時刻（Unixタイムスタンプ）
+    channelId: string       # 実行結果を報告するチャンネルID
 
 var schedules: seq[Schedule] = @[]
-var botUser: User
+var botUser: User # ボット自身のユーザー情報（メンション検知用）
 
 proc loadSchedules() =
+  ## 永続化ストレージ（JSON）からスケジュールを読込
   if fileExists(schedulesFile):
     try:
       let content = readFile(schedulesFile)
@@ -29,6 +31,7 @@ proc loadSchedules() =
       echo "[警告] スケジュールの読込に失敗。初期化を実行。"
 
 proc saveSchedules() =
+  ## 現在のスケジュール一覧を永続化ストレージに保存
   try:
     let data = $(%schedules)
     writeFile(schedulesFile, data)
@@ -36,13 +39,16 @@ proc saveSchedules() =
     echo "[警告] スケジュールの保存に失敗。"
 
 proc cleanAnsi(s: string): string =
+  ## ANSIエスケープシーケンス（色付け等）を除去
   s.replace(re(r"\e\[[0-9;]*[mK]"), "")
 
 proc executePrompt(prompt: string, channelId: string) {.async.} =
+  ## AIエージェントにプロンプトを送信し、結果をDiscordにストリーミング出力する
   var retryCount = 0
   let maxRetries = 3
   var ws: WebSocket = nil
 
+  # エージェントとのWebSocket接続を確立（最大3回試行）
   while retryCount < maxRetries:
     try:
       ws = await newWebSocket(agentWsUrl)
@@ -62,6 +68,7 @@ proc executePrompt(prompt: string, channelId: string) {.async.} =
     var responseBuffer = ""
     var currentMsg: Message = nil
     
+    # WebSocket経由でエージェントからの出力を順次受信
     while ws.readyState == Open:
       let data = await ws.receiveStrPacket()
       if data == "": break
@@ -69,15 +76,15 @@ proc executePrompt(prompt: string, channelId: string) {.async.} =
       let cleanedData = cleanAnsi(data)
       if cleanedData == "": continue
       
+      # Discordのメッセージ長制限（2000文字）を考慮したバッファリング
       if responseBuffer.len + cleanedData.len > 1900:
-        # Buffer exceeds limit, send current buffer and start new
         if currentMsg == nil:
           currentMsg = await discord.api.sendMessage(channelId, "[報告] 実行出力:\n" & responseBuffer)
         else:
           discard await discord.api.editMessage(channelId, currentMsg.id, responseBuffer)
         
         responseBuffer = cleanedData
-        currentMsg = nil # Forces a new message for remaining output
+        currentMsg = nil # 残りの出力のために新しいメッセージを作成
       else:
         responseBuffer.add(cleanedData)
         if currentMsg == nil:
@@ -85,7 +92,7 @@ proc executePrompt(prompt: string, channelId: string) {.async.} =
         else:
           discard await discord.api.editMessage(channelId, currentMsg.id, "[報告] 実行中...\n" & responseBuffer)
     
-    # Final buffer flush
+    # 最終的なバッファをフラッシュ
     if responseBuffer.len > 0:
       if currentMsg == nil:
         discard await discord.api.sendMessage(channelId, "[報告] 実行結果:\n" & responseBuffer)
@@ -97,6 +104,7 @@ proc executePrompt(prompt: string, channelId: string) {.async.} =
     discard await discord.api.sendMessage(channelId, "[警告] 実行エラー: " & e.msg)
 
 proc parseInterval(s: string): int =
+  ## 時間間隔の文字列（例: 10m, 1時間）を秒数に変換
   let pattern = re"(\d+)(s|m|h|d|秒|分|時間|日)"
   var matches: array[2, string]
   if s.find(pattern, matches) != -1:
@@ -111,8 +119,10 @@ proc parseInterval(s: string): int =
   return 0
 
 proc onMessageCreate(s: Shard, m: Message) {.async.} =
+  ## Discordメッセージ受信時のイベントハンドラ
   if m.author.bot: return
   
+  # ヘルプコマンド
   if m.content == "!help":
     let helpMsg = "[報告] 使用可能なコマンド:\n" &
       "!schedule \"プロンプト\" 間隔 (例: !schedule \"CPU使用率を確認\" 1h)\n" &
@@ -122,6 +132,7 @@ proc onMessageCreate(s: Shard, m: Message) {.async.} =
     discard await discord.api.sendMessage(m.channel_id, helpMsg)
     return
 
+  # スケジュール登録
   if m.content.startsWith("!schedule"):
     let pattern = re(""" "(.+)"\s+(\w+)""")
     var matches: array[2, string]
@@ -145,6 +156,7 @@ proc onMessageCreate(s: Shard, m: Message) {.async.} =
       discard await discord.api.sendMessage(m.channel_id, "[警告] 書式不備。例: !schedule \"prompt\" 1h")
     return
 
+  # 登録済みスケジュール一覧
   if m.content == "!schedules":
     var resp = "[報告] 現在のスケジュール一覧:\n"
     if schedules.len == 0:
@@ -154,6 +166,7 @@ proc onMessageCreate(s: Shard, m: Message) {.async.} =
     discard await discord.api.sendMessage(m.channel_id, resp)
     return
 
+  # スケジュール削除
   if m.content.startsWith("!unschedule"):
     let parts = m.content.split(' ')
     if parts.len < 2: return
@@ -168,12 +181,12 @@ proc onMessageCreate(s: Shard, m: Message) {.async.} =
     except: discard
     return
 
-  # Bot mentions
+  # ボットへの直接メンションに対する応答
   if m.content.contains("<@" & botUser.id & ">") or m.content.contains("<@!" & botUser.id & ">"):
     let fullPrompt = m.content.replace(re"<@!?[0-9]+>", "").strip()
     if fullPrompt == "": return
 
-    # Check for natural language scheduling
+    # 自然言語によるスケジュール設定の試行 (例: "30分おきに..." )
     let schedulePattern = re(r"(\d+(?:s|m|h|d|秒|分|時間|日))(?:おきに|ごとに|間隔で)\s*(.+?)(?:して|報告|実行|$)")
     var schedMatches: array[2, string]
     
@@ -194,10 +207,11 @@ proc onMessageCreate(s: Shard, m: Message) {.async.} =
         discard await discord.api.sendMessage(m.channel_id, "[了解] 定期命令を登録。間隔: " & intervalStr)
         return
 
-    # Normal execution via executePrompt
+    # 通常のプロンプト実行
     asyncCheck executePrompt(fullPrompt, m.channel_id)
 
 proc schedulerLoop() {.async.} =
+  ## 10秒ごとにスケジュールの期限を確認するメインループ
   while true:
     let now = epochTime()
     var changed = false
@@ -210,12 +224,15 @@ proc schedulerLoop() {.async.} =
     if changed: saveSchedules()
     await sleepAsync(10000)
 
+# Discord クライアントの準備完了時
 discord.events.on_ready = proc (s: Shard, r: Ready) {.async.} =
   echo "[報告] ボット起動完了。ユーザー: ", r.user.username
   botUser = r.user
   loadSchedules()
-  asyncCheck schedulerLoop()
+  asyncCheck schedulerLoop() # スケジューラーの開始
 
+# メッセージ受信イベントの割り当て
 discord.events.message_create = onMessageCreate
 
+# ゲートウェイインテント（サーバーからの通知を受け取るための設定）
 waitFor discord.startSession(gateway_intents = {giGuilds, giGuildMessages, giMessageContent})
