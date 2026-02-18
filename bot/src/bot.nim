@@ -17,6 +17,7 @@ type
     channelId: string
 
 var schedules: seq[Schedule] = @[]
+var botUser: User
 
 proc loadSchedules() =
   if fileExists(schedulesFile):
@@ -29,13 +30,13 @@ proc loadSchedules() =
 
 proc saveSchedules() =
   try:
-    let data = schedules.toJson()
+    let data = $(%schedules)
     writeFile(schedulesFile, data)
   except:
     echo "[警告] スケジュールの保存に失敗。"
 
 proc cleanAnsi(s: string): string =
-  s.replace(re"\e\[[0-9;]*[mK]", "")
+  s.replace(re(r"\e\[[0-9;]*[mK]"), "")
 
 proc executePrompt(prompt: string, channelId: string) {.async.} =
   var retryCount = 0
@@ -62,7 +63,7 @@ proc executePrompt(prompt: string, channelId: string) {.async.} =
     var currentMsg: Message = nil
     
     while ws.readyState == Open:
-      let data = await ws.receiveStr()
+      let data = await ws.receiveStrPacket()
       if data == "": break
       
       let cleanedData = cleanAnsi(data)
@@ -96,20 +97,20 @@ proc executePrompt(prompt: string, channelId: string) {.async.} =
     discard await discord.api.sendMessage(channelId, "[警告] 実行エラー: " & e.msg)
 
 proc parseInterval(s: string): int =
-  let pattern = re"(\d+)([smhd])"
+  let pattern = re"(\d+)(s|m|h|d|秒|分|時間|日)"
   var matches: array[2, string]
   if s.find(pattern, matches) != -1:
     let val = matches[0].parseInt()
-    let unit = matches[1][0]
-    case unit
-    of 's': return val
-    of 'm': return val * 60
-    of 'h': return val * 3600
-    of 'd': return val * 86400
-    else: return val
+    let unit = matches[1]
+    
+    if unit == "s" or unit == "秒": return val
+    if unit == "m" or unit == "分": return val * 60
+    if unit == "h" or unit == "時間": return val * 3600
+    if unit == "d" or unit == "日": return val * 86400
+    
   return 0
 
-proc onMessageCreate(s: DiscordSession, m: Message) {.async.} =
+proc onMessageCreate(s: Shard, m: Message) {.async.} =
   if m.author.bot: return
   
   if m.content == "!help":
@@ -122,7 +123,7 @@ proc onMessageCreate(s: DiscordSession, m: Message) {.async.} =
     return
 
   if m.content.startsWith("!schedule"):
-    let pattern = re"\"(.+)\"\s+(\w+)"
+    let pattern = re(""" "(.+)"\s+(\w+)""")
     var matches: array[2, string]
     if m.content.find(pattern, matches) != -1:
       let prompt = matches[0]
@@ -168,12 +169,12 @@ proc onMessageCreate(s: DiscordSession, m: Message) {.async.} =
     return
 
   # Bot mentions
-  if m.content.contains("<@" & s.user.id & ">") or m.content.contains("<@!" & s.user.id & ">"):
+  if m.content.contains("<@" & botUser.id & ">") or m.content.contains("<@!" & botUser.id & ">"):
     let fullPrompt = m.content.replace(re"<@!?[0-9]+>", "").strip()
     if fullPrompt == "": return
 
     # Check for natural language scheduling
-    let schedulePattern = re"(\d+[smhd])(?:おきに|ごとに|間隔で)\s*(.+?)(?:して|報告|実行|$)"
+    let schedulePattern = re(r"(\d+(?:s|m|h|d|秒|分|時間|日))(?:おきに|ごとに|間隔で)\s*(.+?)(?:して|報告|実行|$)")
     var schedMatches: array[2, string]
     
     if fullPrompt.find(schedulePattern, schedMatches) != -1:
@@ -209,11 +210,12 @@ proc schedulerLoop() {.async.} =
     if changed: saveSchedules()
     await sleepAsync(10000)
 
-discord.events.on_ready = proc (s: DiscordSession, r: Ready) {.async.} =
+discord.events.on_ready = proc (s: Shard, r: Ready) {.async.} =
   echo "[報告] ボット起動完了。ユーザー: ", r.user.username
+  botUser = r.user
   loadSchedules()
   asyncCheck schedulerLoop()
 
 discord.events.message_create = onMessageCreate
 
-waitFor discord.startSession()
+waitFor discord.startSession(gateway_intents = {giGuilds, giGuildMessages, giMessageContent})

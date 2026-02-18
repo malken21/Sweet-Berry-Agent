@@ -10,10 +10,10 @@ proc handleRequest(req: Request) {.async.} =
       echo "[報告] 新規接続を確立。"
       
       while ws.readyState == Open:
-        let prompt = await ws.receiveStr()
+        let prompt = await ws.receiveStrPacket()
         if prompt == "": break
-        
         echo "[報告] プロンプトを受信: ", prompt
+
         
         # Execute openhands as a subprocess
         # Command: openhands --headless -t <prompt> --always-approve --override-with-envs
