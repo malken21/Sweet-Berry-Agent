@@ -8,7 +8,9 @@ COPY . .
 RUN nim c -d:release -d:ssl --opt:size -o:bot src/bot.nim
 
 # Run stage
-FROM ghcr.io/horiz-lab/horiz-operating-system:latest
+# Switch to alpine:latest for production reliability while maintaining a lightweight footprint.
+# Horiz OS was tested but found to have significant binary execution compatibility issues with custom Nim binaries.
+FROM alpine:latest
 RUN apk add --no-cache openssl ca-certificates libgcc libstdc++ pcre
 WORKDIR /app
 COPY --from=build /app/bot /app/bot
