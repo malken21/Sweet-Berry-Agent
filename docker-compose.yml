@@ -16,7 +16,7 @@ services:
       context: ./agent
     environment:
       - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://host.docker.internal:11434}
-      - LLM_MODEL=ollama/llama3
+      - LLM_MODEL=${LLM_MODEL:-ollama/llama3}
       - LLM_BASE_URL=${OLLAMA_API_BASE:-http://host.docker.internal:11434}
       - LLM_API_KEY=none
       - SANDBOX_TYPE=docker

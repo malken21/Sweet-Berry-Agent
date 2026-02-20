@@ -1,4 +1,4 @@
-version       = "0.2.0"
+version       = "0.3.0"
 author        = "Nim Developer"
 description   = "Discord Bot for Local Agent"
 license       = "MIT"
